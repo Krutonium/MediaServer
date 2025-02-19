@@ -27,9 +27,9 @@ partial class MediaServer
         Console.WriteLine("Config Path: " + configPath);
         _config = loadConfig(configPath);
         HttpListener listener = new HttpListener();
-        listener.Prefixes.Add("http://*:8080/");
+        listener.Prefixes.Add($"http://{_config.Interface}:{_config.Port}/");
         listener.Start();
-        Console.WriteLine("Server running at *:8080/");
+        Console.WriteLine($"Server running at http://{_config.Interface}:{_config.Port}/");
 
         while (true)
         {
