@@ -4,6 +4,8 @@
 
 MediaServer is a simple HTTP server written in C# that serves files and directories from a specified base directory. It supports basic authentication, directory listings, and file downloads. The server also includes features such as GZip compression for responses and support for partial content (resume functionality).
 
+To be clear, the files **Explicitly** do not have protection - The idea is to allow file serving without also having the directory listing visible - While still providing a directory listing for authenticated users to quickly and easily grab links.
+
 ## Features
 
 - **Directory Listing**: Lists the contents of directories, including subdirectories and files.
