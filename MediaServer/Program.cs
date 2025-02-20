@@ -68,7 +68,7 @@ partial class MediaServer
 
     private static async Task HandleDirectoryListing(HttpListenerRequest request, HttpListenerResponse response)
     {
-        string authHeader = request.Headers["Authorization"];
+        string authHeader = request.Headers["Authorization"] ?? string.Empty;
         if (string.IsNullOrEmpty(authHeader) || !IsAuthorized(authHeader) || request.QueryString["logout"] == "401")
         {
             response.StatusCode = 401;
