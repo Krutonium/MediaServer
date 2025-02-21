@@ -1,30 +1,31 @@
 using System.Text.Json;
 
-partial class MediaServer
+internal partial class MediaServer
 {
     public class Config
-    {
-        public Dictionary<string, string> Users { get; set; }
-        public string BaseDirectory { get; set; }
-        public string Interface { get; set; }
-        public int Port { get; set; }
-        public bool ShowNotification { get; set; }
+    {// Generate Default Options
+        public Dictionary<string, string> Users { get; set; } = new Dictionary<string, string>();
+        public string BaseDirectory { get; set; } = "";
+        public string Interface { get; set; } = "*";
+        public int Port { get; set; } = 8080;
+        public bool ShowNotification { get; set; } = true;
     }
-    public static Config loadConfig(string path)
+
+    private static Config LoadConfig(string path)
     {
         if (!File.Exists(path))
         {
-            Config _config = generateDefaultConfig();
+            Config defaultConfig = GenerateDefaultConfig();
             // Make sure the directory exists
-            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            Directory.CreateDirectory(Path.GetDirectoryName(path) ?? throw new InvalidOperationException());
             // Make the JSON pretty/indented
-            File.WriteAllText(path, JsonSerializer.Serialize(_config, new JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(path, JsonSerializer.Serialize(defaultConfig, new JsonSerializerOptions { WriteIndented = true }));
             //File.WriteAllText(path, JsonSerializer.Serialize(_config));
         }
         string json = File.ReadAllText(path);
-        return JsonSerializer.Deserialize<Config>(json);
+        return JsonSerializer.Deserialize<Config>(json)!; // Suppressed because we KNOW it will not be null
     }
-    public static Config generateDefaultConfig()
+    private static Config GenerateDefaultConfig()
     {
         Console.WriteLine("Config file not found, generating default config.");
         return new Config
