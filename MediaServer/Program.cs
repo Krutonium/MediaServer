@@ -133,7 +133,7 @@ partial class MediaServer
             if (request.Url.LocalPath.TrimEnd('/') != "")
             {
                 html.Append(
-                    $"<tr><td><a href=\"{request.Url.Scheme}://{request.Url.Authority}{request.Url.LocalPath.TrimEnd('/')}/../\">..</a></td><td></td><td></td></tr>");
+                    $"<tr><td><button onclick=\"location.href='{request.Url.Scheme}://{request.Url.Authority}{request.Url.LocalPath.TrimEnd('/')}/../'\">Back</button></td><td>Directory</td><td>Tomorrow</td></tr>");
             }
             // Get TimeZone as String Like EST -4
 
@@ -279,8 +279,10 @@ partial class MediaServer
 
     private static string? GetMimeType(string fileName)
     {
-        // Use `file --mime-type FILE_NAME | awk '{print $2}'` to get and return the mime type
         string mimeType = "application/octet-stream";
+        
+        // There *must* be a better way to do this, instead of spawning a process for every new request
+        
         try
         {
             // Create a Process
