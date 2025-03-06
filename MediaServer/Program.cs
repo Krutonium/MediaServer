@@ -288,7 +288,7 @@ partial class MediaServer
             // Create a Process
             ProcessStartInfo PSI = new ProcessStartInfo();
             PSI.FileName = "file";
-            PSI.Arguments = $"--mime-type {fileName}";
+            PSI.Arguments = $"--mime-type \"{fileName}\"";
             PSI.RedirectStandardOutput = true;
             PSI.UseShellExecute = false;
             PSI.CreateNoWindow = true;
