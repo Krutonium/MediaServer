@@ -7,6 +7,10 @@ partial class MediaServer
 {
     private static Config _config = null!;
     private static string _configPath = null!;
+    /// <summary>
+    /// Main entry point for the program
+    /// </summary>
+    /// <param name="args"></param>
     static async Task Main(string[] args)
     {
         // Check if args was a path to a config file
@@ -35,6 +39,11 @@ partial class MediaServer
         }
         // ReSharper disable once FunctionNeverReturns
     }
+    /// <summary>
+    /// Checks if a file is a symlink (so it can be handled correctly)
+    /// </summary>
+    /// <param name="path"></param>
+    /// <returns>True if Symlink</returns>
     private static bool IsSymlink(string path)
     {
         try
@@ -75,6 +84,11 @@ partial class MediaServer
         }
     }
     
+    /// <summary>
+    /// Generates a Directory Listing for the requested directory
+    /// </summary>
+    /// <param name="request"></param>
+    /// <param name="response"></param>
     private static async Task HandleDirectoryListing(HttpListenerRequest request, HttpListenerResponse response)
     {
         string authHeader = request.Headers["Authorization"] ?? string.Empty;
@@ -187,6 +201,11 @@ partial class MediaServer
         //response.Close();
     }
 
+    /// <summary>
+    /// Generates a compressed response and writes it to the response stream
+    /// </summary>
+    /// <param name="response"></param>
+    /// <param name="buffer"></param>
     private static async Task CompressAndWriteResponse(HttpListenerResponse response, byte[] buffer)
     {
         response.AddHeader("Content-Encoding", "gzip");
@@ -196,6 +215,11 @@ partial class MediaServer
         }
         response.Close();
     }
+    /// <summary>
+    /// Serves a File to the client, with support for Range Requests
+    /// </summary>
+    /// <param name="request"></param>
+    /// <param name="response"></param>
     private static async Task ServeFile(HttpListenerRequest request, HttpListenerResponse response)
     {
         if (request.Url != null)
@@ -275,8 +299,12 @@ partial class MediaServer
         }
 
         response.Close();
-    }
-
+    }   
+    /// <summary>
+    /// Gets the MIME type of a file using the `file` command
+    /// </summary>
+    /// <param name="fileName"></param>
+    /// <returns>A correct mimetype, or application/octet-stream</returns>
     private static string? GetMimeType(string fileName)
     {
         string mimeType = "application/octet-stream";
@@ -307,6 +335,11 @@ partial class MediaServer
         return mimeType;
     }
 
+    /// <summary>
+    /// Checks if the Authorization header is valid
+    /// </summary>
+    /// <param name="authHeader"></param>
+    /// <returns>true if authorized</returns>
     private static bool IsAuthorized(string authHeader)
     {
         if (!authHeader.StartsWith("Basic ")) return false;
