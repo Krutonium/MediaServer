@@ -1,7 +1,7 @@
-﻿using System.IO.Compression;
+﻿using System.Diagnostics;
+using System.IO.Compression;
 using System.Net;
 using System.Text;
-using HeyRed.Mime;
 
 partial class MediaServer
 {
@@ -35,7 +35,18 @@ partial class MediaServer
         }
         // ReSharper disable once FunctionNeverReturns
     }
-
+    private static bool IsSymlink(string path)
+    {
+        try
+        {
+            var fileInfo = new FileInfo(path);
+            return fileInfo.Attributes.HasFlag(FileAttributes.ReparsePoint);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
     private static async Task HandleRequest(HttpListenerContext context)
     {
         var request = context.Request;
@@ -63,7 +74,7 @@ partial class MediaServer
             response.Close();
         }
     }
-
+    
     private static async Task HandleDirectoryListing(HttpListenerRequest request, HttpListenerResponse response)
     {
         string authHeader = request.Headers["Authorization"] ?? string.Empty;
@@ -80,7 +91,6 @@ partial class MediaServer
         {
             string directoryPath = Path.Combine(_config.BaseDirectory, request.Url.LocalPath.TrimStart('/'));
             directoryPath = Path.GetFullPath(directoryPath);
-
             if (!directoryPath.StartsWith(_config.BaseDirectory) || !Directory.Exists(directoryPath))
             {
                 var buf = Encoding.UTF8.GetBytes("<html><body><h1>404 Not Found</h1></body></html>");
@@ -94,12 +104,20 @@ partial class MediaServer
             var files = Directory.GetFiles(directoryPath);
             var directories = Directory.GetDirectories(directoryPath);
         
+            // Remove any Directories or Files that are Symlinks:
+            files = files.Where(file => !IsSymlink(file)).ToArray();
+            directories = directories.Where(dir => !IsSymlink(dir)).ToArray();
+            // I would like to handle these correctly - By resolving them to the final directory or file and then displaying them.
+            // But I'm not sure how to do that - The solutions I've seen seem to be very Windows centric.
+            
             StringBuilder html = new StringBuilder("<!DOCTYPE html><html><head><style>");
-            html.Append("table { width: 100%; border-collapse: collapse; }");
+            html.Append("table { width: 100%; border-collapse: collapse; }"); // Removed table-layout: fixed
             html.Append("th, td { padding: 3px; text-align: left; border: 1px solid #ddd; }");
             html.Append("th { background-color: #f2f2f2; }");
             html.Append("tr:nth-child(even) { background-color: #f9f9f9; }");
             html.Append("tr:hover { background-color: #f1f1f1; }");
+            html.Append("td:nth-child(2), td:nth-child(3) { white-space: nowrap; }"); // Size and Time columns
+            html.Append("td:first-child { word-break: break-all; width: 100%; }"); // Name column takes remaining space
             html.Append("</style></head><body>");
 
             if (_config.ShowNotification)
@@ -117,13 +135,15 @@ partial class MediaServer
                 html.Append(
                     $"<tr><td><a href=\"{request.Url.Scheme}://{request.Url.Authority}{request.Url.LocalPath.TrimEnd('/')}/../\">..</a></td><td></td><td></td></tr>");
             }
+            // Get TimeZone as String Like EST -4
+
             foreach (var dir in directories)
             {
                 var dirInfo = new DirectoryInfo(dir);
                 var dirName = WebUtility.HtmlEncode(dirInfo.Name);
                 var dirUrl = Uri.EscapeDataString(dirInfo.Name);
                 html.Append(
-                    $"<tr><td><a href=\"{request.Url.Scheme}://{request.Url.Authority}{request.Url.LocalPath.TrimEnd('/')}/{dirUrl}/\">{dirName}/</a></td><td>Directory</td><td>{dirInfo.LastWriteTime:yyyy-MM-dd HH:mm:ss}</td></tr>");
+                    $"<tr><td><a href=\"{request.Url.Scheme}://{request.Url.Authority}{request.Url.LocalPath.TrimEnd('/')}/{dirUrl}/\">{dirName}/</a></td><td>Directory</td><td>{dirInfo.LastWriteTime:yyyy-MM-dd hh:mm:ss tt}</td></tr>");
             }
 
             foreach (var file in files)
@@ -150,7 +170,7 @@ partial class MediaServer
                     fileSize = $"{fileInfo.Length / 1024 / 1024 / 1024} GB";
                 }
                 html.Append(
-                    $"<tr><td><a href=\"{request.Url.Scheme}://{request.Url.Authority}{request.Url.LocalPath.TrimEnd('/')}/{fileUrl}\">{fileName}</a></td><td>{fileSize}</td><td>{fileInfo.LastWriteTime:yyyy-MM-dd HH:mm:ss}</td></tr>");
+                    $"<tr><td><a href=\"{request.Url.Scheme}://{request.Url.Authority}{request.Url.LocalPath.TrimEnd('/')}/{fileUrl}\">{fileName}</a></td><td>{fileSize}</td><td>{fileInfo.LastWriteTime:yyyy-MM-dd hh:mm:ss tt}</td></tr>");
                 //html.Append(
                 //    $"<tr><td><a href=\"{request.Url.Scheme}://{request.Url.Authority}{request.Url.LocalPath.TrimEnd('/')}/{fileUrl}\">{fileName}</a></td><td>{fileInfo.Length / 1024 / 1024} MB</td><td>{fileInfo.LastWriteTime:yyyy-MM-dd HH:mm:ss}</td></tr>");
             }
@@ -199,7 +219,7 @@ partial class MediaServer
 
             // Get Filename without Path
             string fileName = Path.GetFileName(filePath);
-            response.ContentType = MimeTypesMap.GetMimeType(fileName);
+            response.ContentType = GetMimeType(fileName);
             //response.ContentType = GetMimeType(filePath);
             response.ContentLength64 = fileInfo.Length;
 
@@ -255,6 +275,34 @@ partial class MediaServer
         }
 
         response.Close();
+    }
+
+    private static string? GetMimeType(string fileName)
+    {
+        // Use `file --mime-type FILE_NAME | awk '{print $2}'` to get and return the mime type
+        string mimeType = "application/octet-stream";
+        try
+        {
+            // Create a Process
+            ProcessStartInfo PSI = new ProcessStartInfo();
+            PSI.FileName = "file";
+            PSI.Arguments = $"--mime-type {fileName}";
+            PSI.RedirectStandardOutput = true;
+            PSI.UseShellExecute = false;
+            PSI.CreateNoWindow = true;
+            Process process = Process.Start(PSI);
+            if (process != null)
+            {
+                process.WaitForExit();
+                mimeType = process.StandardOutput.ReadToEnd().Trim();
+            }
+            // Return the mime type by splitting by space, and then getting the second part
+            return mimeType.Split(' ')[1];
+        } catch (Exception ex)
+        {
+            Console.WriteLine(ex);
+        }
+        return mimeType;
     }
 
     private static bool IsAuthorized(string authHeader)

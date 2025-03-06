@@ -7,8 +7,4 @@
         <Nullable>enable</Nullable>
     </PropertyGroup>
 
-    <ItemGroup>
-      <PackageReference Include="MimeTypesMap" Version="1.0.9" />
-    </ItemGroup>
-
 </Project>
