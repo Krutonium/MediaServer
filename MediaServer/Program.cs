@@ -354,7 +354,7 @@ partial class MediaServer
         // Check if the user exists in the config and the password matches
         foreach(var user in _config.Users)
         {
-            if (user.Key == parts[0] && user.Value == parts[1])
+            if (user.Key.ToLower() == parts[0].ToLower() && user.Value == parts[1])
             {
                 return true;
             }
