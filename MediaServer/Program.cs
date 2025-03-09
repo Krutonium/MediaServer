@@ -7,6 +7,7 @@ partial class MediaServer
 {
     private static Config _config = null!;
     private static string _configPath = null!;
+
     /// <summary>
     /// Main entry point for the program
     /// </summary>
@@ -25,6 +26,7 @@ partial class MediaServer
             baseDirectory = Path.Combine(baseDirectory, "MediaServer");
             _configPath = Path.Combine(baseDirectory, "config.json");
         }
+
         Console.WriteLine("Config Path: " + _configPath);
         _config = LoadConfig(_configPath);
         HttpListener listener = new HttpListener();
@@ -39,6 +41,7 @@ partial class MediaServer
         }
         // ReSharper disable once FunctionNeverReturns
     }
+
     /// <summary>
     /// Checks if a file is a symlink (so it can be handled correctly)
     /// </summary>
@@ -56,34 +59,139 @@ partial class MediaServer
             return false;
         }
     }
+
     private static async Task HandleRequest(HttpListenerContext context)
     {
         var request = context.Request;
         var response = context.Response;
-        
+
         // Print Request Info
         // IP Address (Including Domain Name if Possible), URL.
         Console.WriteLine($"{request.RemoteEndPoint.Address} - {request.Url}");
-        
-        try
+        if (request.HttpMethod == HttpMethod.Get.Method)
         {
-            if (request.Url != null && request.Url.LocalPath.EndsWith("/"))
+            try
             {
-                await HandleDirectoryListing(request, response);
+                if (request.Url != null && request.Url.LocalPath.EndsWith("/"))
+                {
+                    await HandleDirectoryListing(request, response);
+                }
+                else
+                {
+                    await ServeFile(request, response);
+                }
             }
-            else
+            catch (Exception ex)
             {
-                await ServeFile(request, response);
+                Console.WriteLine(ex);
+                response.StatusCode = 500;
+                response.Close();
             }
         }
-        catch (Exception ex)
+
+        if (request.HttpMethod == HttpMethod.Post.Method)
         {
-            Console.WriteLine(ex);
-            response.StatusCode = 500;
+            if (request.Url.AbsolutePath.EndsWith("/uploadFile"))
+            {
+                await HandleFileUpload(request, response);
+            }
+        }
+
+        response.StatusCode = 500;
+        response.Close();
+    }
+
+    private static async Task HandleFileUpload(HttpListenerRequest request, HttpListenerResponse response)
+    {
+        // 1. Make sure they're authorized
+        string authHeader = request.Headers["Authorization"] ?? string.Empty;
+        if (string.IsNullOrEmpty(authHeader) || !IsAuthorized(authHeader))
+        {
+            response.StatusCode = 401;
+            response.AddHeader("WWW-Authenticate", "Basic realm=\"Secure Area\"");
+            response.Close();
+            return;
+        }
+
+        if (request.ContentType != null && request.ContentType.StartsWith("multipart/form-data"))
+        {
+            string boundary = request.ContentType.Split('=')[1];
+            using var input = request.InputStream;
+            using var reader = new StreamReader(input);
+
+            string line;
+            string filename = "";
+            string filePath = "";
+            string finalSavePath = "";
+
+            while ((line = reader.ReadLine()) != null)
+            {
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    // Skip
+                    continue;
+                }
+                if (line.Contains("Content-Disposition") && line.Contains("filename"))
+                {
+                    var filenamePart = line.Split(';')
+                        .FirstOrDefault(x => x.Trim().StartsWith("filename=")) ?? "";
+                    filename = filenamePart.Replace("filename=", "").Trim(' ', '\"');
+                }
+                if (line?.Contains("name=\"currentPath\"") == true)
+                {
+                    reader.ReadLine(); // Skip the empty line
+                    var currentPath = reader.ReadLine()?.Trim() ?? "";
+                    Console.WriteLine($"Uploading {filename} to {currentPath}");
+                    filePath = currentPath.TrimStart('/');
+                    filename = filename.TrimStart('/');
+                }
+            }
+
+            finalSavePath = Path.Combine(_config.BaseDirectory, filePath, filename);
+            finalSavePath = Path.GetFullPath(finalSavePath);
+            Console.WriteLine(finalSavePath);
+            if (!finalSavePath.StartsWith(_config.BaseDirectory))
+            {
+                Console.WriteLine(finalSavePath);
+                response.StatusCode = 403;
+                response.Close();
+                return;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(finalSavePath) ?? "");
+            using var fileStream = File.Create(finalSavePath);
+            // Move reader back to start
+            reader.BaseStream.Position = 0;
+            reader.DiscardBufferedData();
+
+            bool writeData = false;
+            while ((line = reader.ReadLine()) != null)
+            {
+                if (line.StartsWith("--" + boundary))
+                {
+                    if (writeData) break;
+                }
+                else if (writeData)
+                {
+                    fileStream.Write(Encoding.UTF8.GetBytes(line + "\r\n"));
+                }
+
+                if (line.Contains("Content-Disposition") && line.Contains("filename"))
+                {
+                    while (!string.IsNullOrEmpty(line = reader.ReadLine()))
+                    {
+                    }
+
+                    writeData = true;
+                }
+            }
+
+            response.StatusCode = 200;
+            response.OutputStream.Write(Encoding.UTF8.GetBytes("File uploaded successfully"), 0, 26);
             response.Close();
         }
     }
-    
+
     /// <summary>
     /// Generates a Directory Listing for the requested directory
     /// </summary>
@@ -115,15 +223,16 @@ partial class MediaServer
                 response.Close();
                 return;
             }
+
             var files = Directory.GetFiles(directoryPath);
             var directories = Directory.GetDirectories(directoryPath);
-        
+
             // Remove any Directories or Files that are Symlinks:
             files = files.Where(file => !IsSymlink(file)).ToArray();
             directories = directories.Where(dir => !IsSymlink(dir)).ToArray();
             // I would like to handle these correctly - By resolving them to the final directory or file and then displaying them.
             // But I'm not sure how to do that - The solutions I've seen seem to be very Windows centric.
-            
+
             StringBuilder html = new StringBuilder("<!DOCTYPE html><html><head><style>");
             html.Append("table { width: 100%; border-collapse: collapse; }"); // Removed table-layout: fixed
             html.Append("th, td { padding: 3px; text-align: left; border: 1px solid #ddd; }");
@@ -133,14 +242,25 @@ partial class MediaServer
             html.Append("td:nth-child(2), td:nth-child(3) { white-space: nowrap; }"); // Size and Time columns
             html.Append("td:first-child { word-break: break-all; width: 100%; }"); // Name column takes remaining space
             html.Append("</style></head><body>");
-
+            html.Append("<h1>Directory Listing</h1>");
+            // Add forms in the directory listing (inside HandleDirectoryListing)... But only if not default config
             if (_config.ShowNotification)
             {
-                html.Append("<div class=\"notification\" style=\"background-color: #f44336; color: white; text-align: center; padding: 10px;\">");
-                html.Append($"<p>Warning: You are using the default configuration. Edit the config at {Path.GetFullPath(_configPath)}</p>");
+                html.Append(
+                    "<div class=\"notification\" style=\"background-color: #f44336; color: white; text-align: center; padding: 10px;\">");
+                html.Append(
+                    $"<p>Warning: You are using the default configuration. Edit the config at {Path.GetFullPath(_configPath)}</p>");
                 html.Append("</div>");
             }
-            html.Append("<h1>Directory Listing</h1>");
+            else
+            {
+                html.Append("<form action='/uploadFile' method='POST' enctype='multipart/form-data'>");
+                html.Append("<input type='file' name='uploadedFile'/>");
+                html.Append("<input type='submit' value='Upload File'/>");
+                html.Append($"<input type='hidden' name='currentPath' value='{request.Url.LocalPath}'/>");
+                html.Append("</form>");
+            }
+
             html.Append("<table border=\"1\"><tr><th>Name</th><th>Size</th><th>Last Modified</th></tr>");
 
             // Add a `..` link to go up a directory if we're not at the root
@@ -149,7 +269,6 @@ partial class MediaServer
                 html.Append(
                     $"<tr><td><button onclick=\"location.href='{request.Url.Scheme}://{request.Url.Authority}{request.Url.LocalPath.TrimEnd('/')}/../'\">Back</button></td><td>Directory</td><td>Tomorrow</td></tr>");
             }
-            // Get TimeZone as String Like EST -4
 
             foreach (var dir in directories)
             {
@@ -183,6 +302,7 @@ partial class MediaServer
                 {
                     fileSize = $"{fileInfo.Length / 1024 / 1024 / 1024} GB";
                 }
+
                 html.Append(
                     $"<tr><td><a href=\"{request.Url.Scheme}://{request.Url.Authority}{request.Url.LocalPath.TrimEnd('/')}/{fileUrl}\">{fileName}</a></td><td>{fileSize}</td><td>{fileInfo.LastWriteTime:yyyy-MM-dd hh:mm:ss tt}</td></tr>");
                 //html.Append(
@@ -213,8 +333,10 @@ partial class MediaServer
         {
             await gzipStream.WriteAsync(buffer, 0, buffer.Length);
         }
+
         response.Close();
     }
+
     /// <summary>
     /// Serves a File to the client, with support for Range Requests
     /// </summary>
@@ -229,7 +351,6 @@ partial class MediaServer
 
             if (!filePath.StartsWith(_config.BaseDirectory) || !File.Exists(filePath))
             {
-            
                 var buf = Encoding.UTF8.GetBytes("<html><body><h1>404 Not Found</h1></body></html>");
                 response.ContentType = "text/html";
                 response.ContentLength64 = buf.Length;
@@ -252,7 +373,9 @@ partial class MediaServer
                 string rangeHeader = request.Headers["Range"] ?? "0";
                 var range = rangeHeader.Replace("bytes=", "").Split('-');
                 long start = long.Parse(range[0]);
-                long end = range.Length > 1 && !string.IsNullOrEmpty(range[1]) ? long.Parse(range[1]) : fileInfo.Length - 1;
+                long end = range.Length > 1 && !string.IsNullOrEmpty(range[1])
+                    ? long.Parse(range[1])
+                    : fileInfo.Length - 1;
 
                 if (start >= 0 && end >= start && end < fileInfo.Length)
                 {
@@ -283,6 +406,7 @@ partial class MediaServer
                             {
                                 break;
                             }
+
                             bytesLeft -= bytesRead;
                         }
                     }
@@ -299,7 +423,8 @@ partial class MediaServer
         }
 
         response.Close();
-    }   
+    }
+
     /// <summary>
     /// Gets the MIME type of a file using the `file` command
     /// </summary>
@@ -308,9 +433,9 @@ partial class MediaServer
     private static string? GetMimeType(string fileName)
     {
         string mimeType = "application/octet-stream";
-        
+
         // There *must* be a better way to do this, instead of spawning a process for every new request
-        
+
         try
         {
             // Create a Process
@@ -326,12 +451,15 @@ partial class MediaServer
                 process.WaitForExit();
                 mimeType = process.StandardOutput.ReadToEnd().Trim();
             }
+
             // Return the mime type by splitting by space, and then getting the second part
             return mimeType.Split(' ')[1];
-        } catch (Exception ex)
+        }
+        catch (Exception ex)
         {
             Console.WriteLine(ex);
         }
+
         return mimeType;
     }
 
@@ -346,13 +474,13 @@ partial class MediaServer
 
         // Reload the config on every request to allow for changes without restarting the server
         _config = LoadConfig(_configPath);
-        
+
         string encodedCredentials = authHeader.Substring("Basic ".Length).Trim();
         string decodedCredentials = Encoding.UTF8.GetString(Convert.FromBase64String(encodedCredentials));
         string[] parts = decodedCredentials.Split(':');
         if (parts.Length != 2) return false;
         // Check if the user exists in the config and the password matches
-        foreach(var user in _config.Users)
+        foreach (var user in _config.Users)
         {
             if (user.Key == parts[0] && user.Value == parts[1])
             {
